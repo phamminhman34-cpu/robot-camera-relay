@@ -51,7 +51,12 @@ wss.on('connection', (ws, req) => {
   } else if (url.startsWith('/mic-up')) {
     // Robot gui am thanh mic cua no len day, phat lai cho phone nghe
     console.log('[mic-up] ESP32 (mic) da ket noi');
-    ws.on('message', (data) => relayBroadcast(micUpListeners, data));
+    let micUpCount = 0;
+    ws.on('message', (data) => {
+      micUpCount++;
+      if (micUpCount % 20 === 0) console.log(`[mic-up] da nhan ${micUpCount} goi tu robot, size=${data.length} bytes, dang phat cho ${micUpListeners.size} nguoi nghe`);
+      relayBroadcast(micUpListeners, data);
+    });
     ws.on('close', () => console.log('[mic-up] ESP32 (mic) da ngat ket noi'));
 
   } else if (url.startsWith('/mic-up-listen')) {
@@ -62,7 +67,12 @@ wss.on('connection', (ws, req) => {
   } else if (url.startsWith('/mic-down')) {
     // Phone gui am thanh mic cua no len day, phat lai cho robot phat ra loa
     console.log('[mic-down] Phone (mic) da ket noi');
-    ws.on('message', (data) => relayBroadcast(micDownListeners, data));
+    let micDownCount = 0;
+    ws.on('message', (data) => {
+      micDownCount++;
+      if (micDownCount % 20 === 0) console.log(`[mic-down] da nhan ${micDownCount} goi tu phone, size=${data.length} bytes, dang phat cho ${micDownListeners.size} robot nghe`);
+      relayBroadcast(micDownListeners, data);
+    });
     ws.on('close', () => console.log('[mic-down] Phone (mic) da ngat ket noi'));
 
   } else if (url.startsWith('/mic-down-listen')) {
