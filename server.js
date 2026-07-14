@@ -68,12 +68,13 @@ wss.on('connection', (ws, req) => {
     // Phone gui am thanh mic cua no len day, phat lai cho robot phat ra loa
     console.log('[mic-down] Phone (mic) da ket noi');
     let micDownCount = 0;
-    ws.on('message', (data) => {
+    ws.on('message', (data, isBinary) => {
       micDownCount++;
-      if (micDownCount % 20 === 0) console.log(`[mic-down] da nhan ${micDownCount} goi tu phone, size=${data.length} bytes, dang phat cho ${micDownListeners.size} robot nghe`);
+      console.log(`[mic-down] NHAN GOI #${micDownCount}, size=${data.length} bytes, isBinary=${isBinary}`);
       relayBroadcast(micDownListeners, data);
     });
-    ws.on('close', () => console.log('[mic-down] Phone (mic) da ngat ket noi'));
+    ws.on('close', (code, reason) => console.log(`[mic-down] Phone (mic) da ngat ket noi, code=${code}, reason=${reason}`));
+    ws.on('error', (err) => console.log('[mic-down] LOI:', err.message));
 
   } else if (url.startsWith('/mic-down-listen')) {
     micDownListeners.add(ws);
