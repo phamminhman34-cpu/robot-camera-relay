@@ -1,3 +1,8 @@
+// Server trung gian WebSocket cho video camera robot
+// - ESP32 (camera) kết nối vào đường dẫn /camera và gửi ảnh JPEG nhị phân liên tục
+// - App điện thoại kết nối vào đường dẫn /viewer để nhận lại đúng ảnh đó
+// Deploy: dán nguyên file này vào project Node.js trên Glitch.com, cùng với package.json
+
 const WebSocket = require('ws');
 const http = require('http');
 
@@ -6,11 +11,10 @@ const server = http.createServer((req, res) => {
   res.end('Robot camera relay server dang chay OK');
 });
 
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({ server, perMessageDeflate: false });
 
-let viewers = new Set();
-let micUpListeners = new Set();
-let micDownListeners = new Set();
+let viewers = new Set();       // xem camera
+let audioClients = new Set();  // ca robot va phone dung chung 1 kenh audio
 let frameCount = 0;
 
 function relayBroadcast(listeners, data) {
@@ -26,45 +30,40 @@ wss.on('connection', (ws, req) => {
     console.log('[camera] ESP32 da ket noi');
     ws.on('message', (data) => {
       frameCount++;
-      if (frameCount % 50 === 0) console.log(`[camera] ${frameCount} frames, ${viewers.size} viewers`);
+      if (frameCount % 50 === 0) {
+        console.log(`[camera] da nhan ${frameCount} khung hinh, dang phat cho ${viewers.size} nguoi xem`);
+      }
       relayBroadcast(viewers, data);
     });
-    ws.on('close', () => console.log('[camera] ESP32 ngat ket noi'));
+    ws.on('close', () => console.log('[camera] ESP32 da ngat ket noi'));
+    ws.on('error', (err) => console.log('[camera] loi:', err.message));
 
   } else if (url.startsWith('/viewer')) {
     viewers.add(ws);
-    console.log(`[viewer] ket noi, tong: ${viewers.size}`);
-    ws.on('close', () => { viewers.delete(ws); });
-
-  } else if (url.startsWith('/mic-up-listen')) {   // ← PHẢI ĐỂ TRƯỚC /mic-up
-    micUpListeners.add(ws);
-    console.log(`[mic-up-listen] phone nghe mic robot, tong: ${micUpListeners.size}`);
-    ws.on('close', () => micUpListeners.delete(ws));
-
-  } else if (url.startsWith('/mic-up')) {
-    console.log('[mic-up] ESP32 mic ket noi');
-    let count = 0;
-    ws.on('message', (data) => {
-      count++;
-      if (count % 50 === 0) console.log(`[mic-up] ${count} goi, ${micUpListeners.size} listeners`);
-      relayBroadcast(micUpListeners, data);
+    console.log(`[viewer] co nguoi xem moi ket noi, tong: ${viewers.size}`);
+    ws.on('close', () => {
+      viewers.delete(ws);
+      console.log(`[viewer] mot nguoi xem thoat, tong: ${viewers.size}`);
     });
-    ws.on('close', () => console.log('[mic-up] ESP32 mic ngat'));
+    ws.on('error', (err) => console.log('[viewer] loi:', err.message));
 
-  } else if (url.startsWith('/mic-down-listen')) {  // ← PHẢI ĐỂ TRƯỚC /mic-down
-    micDownListeners.add(ws);
-    console.log(`[mic-down-listen] robot nghe mic phone, tong: ${micDownListeners.size}`);
-    ws.on('close', () => micDownListeners.delete(ws));
-
-  } else if (url.startsWith('/mic-down')) {
-    console.log('[mic-down] Phone mic ket noi');
-    let count = 0;
+  } else if (url.startsWith('/audio')) {
+    // MOT endpoint duy nhat cho ca robot va phone - ai gui thi phat lai cho NGUOI KHAC
+    // (khong chia /mic-up, /mic-down nua - tranh loi trung route)
+    audioClients.add(ws);
+    console.log(`[audio] co client moi ket noi, tong: ${audioClients.size}`);
     ws.on('message', (data) => {
-      count++;
-      if (count % 20 === 0) console.log(`[mic-down] ${count} goi, ${micDownListeners.size} listeners`);
-      relayBroadcast(micDownListeners, data);
+      for (const client of audioClients) {
+        if (client !== ws && client.readyState === WebSocket.OPEN) {
+          client.send(data);
+        }
+      }
     });
-    ws.on('close', () => console.log('[mic-down] Phone mic ngat'));
+    ws.on('close', () => {
+      audioClients.delete(ws);
+      console.log(`[audio] client ngat ket noi, tong: ${audioClients.size}`);
+    });
+    ws.on('error', (err) => console.log('[audio] LOI:', err.message));
 
   } else {
     ws.close();
