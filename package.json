@@ -1,15 +1,15 @@
 {
   "name": "robot-camera-relay",
   "version": "1.0.0",
-  "description": "WebSocket relay server cho video camera robot",
+  "description": "Server trung gian: chuyen tiep camera va audio 2 chieu giua ESP32 va dien thoai",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "ws": "^8.16.0"
+    "ws": "^8.17.0"
   },
   "engines": {
-    "node": "18.x"
+    "node": ">=18"
   }
 }
