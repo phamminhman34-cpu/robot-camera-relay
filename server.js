@@ -1,24 +1,14 @@
 // ============================================================
 // Robot Camera + Audio Relay Server
 // Deploy server nay len Render. No lam nhiem vu trung gian:
-//   - /stream : ESP32 gui CA anh camera LAN audio mic robot qua
-//               CHUNG 1 ket noi (gop lai de tiet kiem RAM ben ESP32,
-//               tranh loi "SSL - Memory allocation failed" do mo qua
-//               nhieu ket noi SSL cung luc). Moi goi tin binary co
-//               1 byte prefix dau tien de phan biet loai:
-//                 0x01 = frame anh JPEG (camera)
-//                 0x02 = am thanh PCM16 (mic robot)
+//   - /camera : ESP32 gui frame anh len day
 //   - /viewer : Dien thoai (Flutter) ket noi vao day de XEM anh
-//   - /audio  : Dien thoai (Flutter) ket noi vao day de NOI CHUYEN
-//               2 CHIEU voi robot (server tu them/bo prefix khi
-//               chuyen tiep qua lai voi /stream, ben Flutter KHONG
-//               can doi gi ca)
+//   - /audio  : CA ESP32 va dien thoai cung ket noi vao day de
+//               NOI CHUYEN 2 CHIEU voi nhau (day la cho de gay
+//               loi nhat vi phai chuyen tiep dung huong)
 // ============================================================
 const WebSocket = require("ws");
 const http = require("http");
-
-const PKT_TYPE_CAMERA = 0x01;
-const PKT_TYPE_AUDIO  = 0x02;
 
 const server = http.createServer((req, res) => {
   res.writeHead(200);
@@ -27,16 +17,16 @@ const server = http.createServer((req, res) => {
 
 // Tao 3 WebSocket server rieng, gan vao cung 1 HTTP server,
 // phan biet nhau bang duong dan (path) khi nang cap ket noi.
-const wssStream = new WebSocket.Server({ noServer: true }); // ESP32 (camera + audio gop chung)
+const wssCamera = new WebSocket.Server({ noServer: true });
 const wssViewer = new WebSocket.Server({ noServer: true });
 const wssAudio = new WebSocket.Server({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
-  if (pathname === "/stream") {
-    wssStream.handleUpgrade(req, socket, head, (ws) => {
-      wssStream.emit("connection", ws, req);
+  if (pathname === "/camera") {
+    wssCamera.handleUpgrade(req, socket, head, (ws) => {
+      wssCamera.emit("connection", ws, req);
     });
   } else if (pathname === "/viewer") {
     wssViewer.handleUpgrade(req, socket, head, (ws) => {
@@ -52,47 +42,24 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 // ------------------------------------------------------------
-// STREAM: ESP32 (1 nguon duy nhat) gui ca camera va audio qua day.
-//   - Frame camera (prefix 0x01) --broadcast--> tat ca Viewer
-//   - Frame audio (prefix 0x02)  --broadcast--> tat ca client /audio
-//     (giu nguyen huong "phat cho nguoi khac" nhu kenh /audio cu,
-//     nhung ESP32 gio khong con nam trong wssAudio.clients nua nen
-//     khong can dieu kien loai tru chinh no)
+// CAMERA: ESP32 (1 nguon) --broadcast--> nhieu Viewer (dien thoai)
 // ------------------------------------------------------------
 let viewers = new Set();
 
-let espSocket = null; // tham chieu ket noi ESP32 hien tai, dung de gui audio XUONG robot
-
-wssStream.on("connection", (ws) => {
-  console.log("[stream] ESP32 da ket noi (camera + audio chung 1 kenh)");
-  espSocket = ws;
+wssCamera.on("connection", (ws) => {
+  console.log("[camera] ESP32 da ket noi va bat dau gui anh");
 
   ws.on("message", (data, isBinary) => {
-    if (!isBinary || data.length < 1) return;
-
-    const pktType = data[0];
-    const payload = data.subarray(1); // bo byte prefix truoc khi forward
-
-    if (pktType === PKT_TYPE_CAMERA) {
-      for (const viewer of viewers) {
-        if (viewer.readyState === WebSocket.OPEN) {
-          viewer.send(payload, { binary: true });
-        }
+    // data la 1 frame JPEG tu ESP32 -> gui cho tat ca viewer dang xem
+    for (const viewer of viewers) {
+      if (viewer.readyState === WebSocket.OPEN) {
+        viewer.send(data, { binary: true });
       }
-    } else if (pktType === PKT_TYPE_AUDIO) {
-      wssAudio.clients.forEach((phoneClient) => {
-        if (phoneClient.readyState === WebSocket.OPEN) {
-          phoneClient.send(payload, { binary: true });
-        }
-      });
     }
   });
 
-  ws.on("close", () => {
-    console.log("[stream] ESP32 mat ket noi");
-    if (espSocket === ws) espSocket = null;
-  });
-  ws.on("error", (e) => console.log("[stream] Loi:", e.message));
+  ws.on("close", () => console.log("[camera] ESP32 mat ket noi camera"));
+  ws.on("error", (e) => console.log("[camera] Loi:", e.message));
 });
 
 wssViewer.on("connection", (ws) => {
@@ -107,32 +74,21 @@ wssViewer.on("connection", (ws) => {
 });
 
 // ------------------------------------------------------------
-// AUDIO: Dien thoai (Flutter) ket noi vao day de noi chuyen voi robot.
-// ESP32 KHONG con ket noi truc tiep vao /audio nua (da gop vao /stream),
-// nen server dong vai "cau noi":
-//   - Dien thoai gui audio len day  -> server them prefix 0x02
-//     roi forward XUONG cho ESP32 qua ket noi /stream (espSocket).
-//   - Audio tu mic robot (ESP32 gui qua /stream, prefix 0x02) da duoc
-//     xu ly o wssStream ben tren, forward LEN cho cac client /audio
-//     nay (da bo prefix roi, dien thoai nhan du lieu PCM16 thuan,
-//     khong can doi gi ca).
-// Neu co nhieu dien thoai cung ket noi /audio, audio cua may nay
-// cung duoc phat cho may kia luon (giu dung hanh vi broadcast cu).
+// AUDIO 2 CHIEU
+// Ca ESP32 va dien thoai deu ket noi vao CUNG /audio.
+// Dung dung pattern da duoc kiem chung trong mau
+// "ThatProject Walkie-Talkie" (Server_NodeJS/server.js): moi khi
+// 1 client gui du lieu am thanh len, server PHAT LAI cho TAT CA
+// cac client KHAC (khong gui lai cho chinh no) — don gian, khong
+// can biet ai la "robot" ai la "dien thoai", tranh duoc loi
+// gan nham vai tro.
 // ------------------------------------------------------------
 wssAudio.on("connection", (ws) => {
-  console.log("[audio] Co dien thoai ket noi kenh audio. Tong so:", wssAudio.clients.size);
+  console.log("[audio] Co thiet bi moi ket noi kenh audio. Tong so:", wssAudio.clients.size);
 
   ws.on("message", (data, isBinary) => {
-    if (!isBinary) return;
-
-    // Gui xuong robot (them prefix PKT_TYPE_AUDIO vi ESP32 chi chap
-    // nhan goi co byte dau = 0x02 tren ket noi /stream)
-    if (espSocket && espSocket.readyState === WebSocket.OPEN) {
-      const framed = Buffer.concat([Buffer.from([PKT_TYPE_AUDIO]), data]);
-      espSocket.send(framed, { binary: true });
-    }
-
-    // Neu co nhieu dien thoai cung nghe, phat cho cac may khac
+    // Phat du lieu am thanh nhan duoc cho TAT CA client khac
+    // (khong gui nguoc lai chinh nguoi vua gui, tranh tieng vong)
     wssAudio.clients.forEach((otherClient) => {
       if (otherClient !== ws && otherClient.readyState === WebSocket.OPEN) {
         otherClient.send(data, { binary: true });
@@ -141,7 +97,7 @@ wssAudio.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    console.log("[audio] Dien thoai roi khoi kenh audio. Con lai:", wssAudio.clients.size);
+    console.log("[audio] Thiet bi roi khoi kenh audio. Con lai:", wssAudio.clients.size);
   });
   ws.on("error", (e) => console.log("[audio] Loi:", e.message));
 });
